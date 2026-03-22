@@ -25,8 +25,8 @@ except ImportError:
     EXCEL_OK = False
 
 # ─── SOZLAMALAR ───────────────────────────────────────────────────────────────
-BOT_TOKEN   = "YOUR_BOT_TOKEN_HERE"
-ADMIN_IDS   = [123456789]           # ← o'z Telegram ID ingizni kiriting
+BOT_TOKEN   = "8457415158:AAGSQKefTR1eSGIEv7FYdIjmErLeCJbdsHA"
+ADMIN_IDS   = [7378071060]           # ← o'z Telegram ID ingizni kiriting
 DB_PATH     = "stipend_bot.db"
 
 logging.basicConfig(

@@ -1,1 +1,0 @@
-# salohitdinova-uchun-stipendiyantlarga

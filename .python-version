@@ -1,4 +1,1 @@
-echo "python-3.12.7" > runtime.txt
-git add runtime.txt
-git commit -m "fix: pin Python 3.12"
-git push
+3.12

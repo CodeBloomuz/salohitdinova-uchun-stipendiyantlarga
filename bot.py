@@ -25,8 +25,8 @@ except ImportError:
     EXCEL_OK = False
 
 # ─── SOZLAMALAR ───────────────────────────────────────────────────────────────
-BOT_TOKEN   = "8457415158:AAGSQKefTR1eSGIEv7FYdIjmErLeCJbdsHA"
-ADMIN_IDS   = [7378071060]           # ← o'z Telegram ID ingizni kiriting
+BOT_TOKEN   = "YOUR_BOT_TOKEN_HERE"
+ADMIN_IDS   = [123456789]           # ← o'z Telegram ID ingizni kiriting
 DB_PATH     = "stipend_bot.db"
 
 logging.basicConfig(
@@ -463,24 +463,24 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         u = get_user(uid)
         save_message(uid, text)
         ctx.user_data.pop("step", None)
-        # Forward to admins
+        admin_notified = False
         for admin_id in ADMIN_IDS:
             try:
                 await ctx.bot.send_message(
                     admin_id,
                     f"✉️ *Talabadan xabar*\n\n"
                     f"👤 {u['name']} | {u['group_name']}\n"
-                    f"📱 {u['phone']}\n"
+                    f"📱 {u['phone'] or '—'}\n"
                     f"🆔 `{uid}`\n\n"
                     f"💬 {text}",
                     parse_mode="Markdown",
                 )
-            except Exception:
-                pass
-        await update.message.reply_text(
-            "✅ Xabaringiz adminга yuborildi!",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+                admin_notified = True
+                logging.info(f"Talaba {uid} xabari admin {admin_id} ga yuborildi.")
+            except Exception as e:
+                logging.error(f"Admin {admin_id} ga xabar yuborishda XATO: {e}")
+        note = "✅ Xabaringiz adminга yuborildi!" if admin_notified else "⚠️ Xabar saqlandi."
+        await update.message.reply_text(note, reply_markup=ReplyKeyboardRemove())
         await update.message.reply_text("Asosiy menyu:", reply_markup=main_menu())
         return
 
@@ -613,56 +613,72 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if step != "file":
         return
 
-    err = await check_access(update)
-    if err:
-        await update.message.reply_text(err)
+    u = get_user(uid)
+    if not u or u["status"] != "approved":
+        await update.message.reply_text("❌ Sizda ruxsat yo'q.")
+        ctx.user_data.clear()
         return
 
     atype = ctx.user_data.pop("act_type", None)
     ctx.user_data.pop("step", None)
     if not atype:
+        await update.message.reply_text("Xatolik. Qaytadan urinib ko'ring.", reply_markup=main_menu())
         return
 
-    u = get_user(uid)
     msg = update.message
+    file_id, ftype = None, None
     if msg.document:
         file_id, ftype = msg.document.file_id, "document"
     elif msg.photo:
         file_id, ftype = msg.photo[-1].file_id, "photo"
+    elif msg.video:
+        file_id, ftype = msg.video.file_id, "video"
     else:
-        await update.message.reply_text("Iltimos, fayl yoki rasm yuboring.")
+        ctx.user_data["step"]     = "file"
+        ctx.user_data["act_type"] = atype
+        await update.message.reply_text("⚠️ Iltimos, *fayl, rasm yoki video* yuboring.", parse_mode="Markdown")
         return
 
-    acts    = get_activities()
-    act     = acts[atype]
-    req_id  = submit_request(uid, atype, u["semester"], file_id, ftype)
+    acts   = get_activities()
+    act    = acts.get(atype, {})
+    req_id = submit_request(uid, atype, u["semester"], file_id, ftype)
 
-    # Adminlarga yuborish
+    caption = (
+        f"📩 *Yangi so'rov #{req_id}*\n\n"
+        f"👤 {u['name']} | {u['group_name']}\n"
+        f"📱 {u['phone'] or '—'}\n"
+        f"🆔 `{uid}`\n"
+        f"📋 {act.get('icon','')} {act.get('name', atype)}  (+{act.get('pts','?')} ball)\n"
+        f"📅 {u['semester']}-semestr"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"req_approve_{req_id}_{uid}"),
+        InlineKeyboardButton("❌ Rad etish",  callback_data=f"req_reject_{req_id}_{uid}"),
+    ]])
+
+    admin_notified = False
     for admin_id in ADMIN_IDS:
         try:
-            caption = (
-                f"📩 *Yangi so'rov #{req_id}*\n\n"
-                f"👤 {u['name']} | {u['group_name']}\n"
-                f"📱 {u['phone']}\n"
-                f"📋 {act['icon']} {act['name']}  (+{act['pts']} ball)\n"
-                f"📅 {u['semester']}-semestr"
-            )
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("✅ Tasdiqlash",  callback_data=f"req_approve_{req_id}_{uid}"),
-                InlineKeyboardButton("❌ Rad etish",   callback_data=f"req_reject_{req_id}_{uid}"),
-            ]])
             if ftype == "photo":
-                await ctx.bot.send_photo(admin_id, file_id, caption=caption,
-                                         parse_mode="Markdown", reply_markup=kb)
-            else:
-                await ctx.bot.send_document(admin_id, file_id, caption=caption,
-                                            parse_mode="Markdown", reply_markup=kb)
-        except Exception:
-            pass
+                await ctx.bot.send_photo(admin_id, file_id,
+                                         caption=caption, parse_mode="Markdown", reply_markup=kb)
+            elif ftype == "document":
+                await ctx.bot.send_document(admin_id, file_id,
+                                            caption=caption, parse_mode="Markdown", reply_markup=kb)
+            elif ftype == "video":
+                await ctx.bot.send_video(admin_id, file_id,
+                                         caption=caption, parse_mode="Markdown", reply_markup=kb)
+            admin_notified = True
+            logging.info(f"So'rov #{req_id} admin {admin_id} ga yuborildi.")
+        except Exception as e:
+            logging.error(f"Admin {admin_id} ga yuborishda XATO: {e}")
 
+    status_note = "✅ Admin xabardor qilindi!" if admin_notified else "⚠️ Hujjat saqlandi, admin tez orada ko'radi."
     await update.message.reply_text(
-        f"✅ *Hujjat yuborildi!*\n\n"
-        f"{act['icon']} {act['name']}\n\n"
+        f"📨 *Hujjat muvaffaqiyatli yuborildi!*\n\n"
+        f"{act.get('icon','')} *{act.get('name', atype)}*\n"
+        f"So'rov raqami: *#{req_id}*\n\n"
+        f"{status_note}\n\n"
         f"_{random.choice(MOTIVATIONS)}_",
         parse_mode="Markdown",
         reply_markup=main_menu(),
@@ -1189,11 +1205,11 @@ def main():
     app.add_handler(MessageHandler(filters.Regex(r"^/del_\d+$"), cmd_del))
     app.add_handler(MessageHandler(filters.Regex(r"^/adj_\d+$"), cmd_adj))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(CallbackQueryHandler(button))
     print("🤖 Bot ishga tushdi!")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
